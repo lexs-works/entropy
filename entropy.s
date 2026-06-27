@@ -1,6 +1,8 @@
 # entropy.s — 256-bit RDRAND entropy with CF checks
 # Assemble: x86_64-w64-mingw32-as --64 -o entropy.o entropy.s
 # Link:     x86_64-w64-mingw32-ld -o entropy.exe entropy.o -lkernel32
+# Or link:  x86_64-w64-mingw32-ld -o entropy.exe entropy.o -lkernel32 --no-insert-timestamp --build-id=none
+
 #
 # "Entropy is not negotiable. The machine decides, not you."
 #
@@ -148,9 +150,10 @@ main:
 # ERROR HANDLER — When the silicon lies
 # ========================================================
 # This is not a "retry" scenario. If the CPU's hardware
-# random source has failed, you have bigger problems than
-# a missing entropy seed — you have a potential silicon
-# degradation, thermal runaway, or a cosmic ray event.
+# random source has failed — whether due to silicon
+# degradation, thermal runaway, a cosmic ray event, or
+# simply an exhausted entropy pool from concurrent thread
+# contention — the reason does not matter. We do not guess.
 # We print the message and exit with code 1.
 error_handler:
     movq    %rbx, %rcx
@@ -172,8 +175,11 @@ error_handler:
 hex_and_print:
     pushq   %rbp
     movq    %rsp, %rbp
-    subq    $32, %rsp
+    subq    $48, %rsp             # Shadow space + lpOverlaped + stack align
+    
+    # Save non-volatile registers
     movq    %r12, -8(%rbp)        # We'll use r12 for buffer pointer
+    movq    %r14, -16(%rbp)       # r14: loop counter (protected from WinAPI)
 
     # --- Convert to hex ---
     # Process from most significant nibble (bits 60-63) down to
@@ -181,7 +187,7 @@ hex_and_print:
     # value left by 4 bits, exposing the next nibble.
     leaq    hextab(%rip), %r8     # r8 = hex lookup table base
     leaq    hexbuf(%rip), %r12    # r12 = output buffer
-    movl    $16, %ecx             # 16 nibbles = 64 bits
+    movl    $16, %r14d            # 16 nibbles = 64 bits
 
 .Lhex:
     movq    %r13, %rdx
@@ -191,17 +197,18 @@ hex_and_print:
     movb    %dl, (%r12)           # Store character
     incq    %r12
     shlq    $4, %r13              # Next nibble
-    decl    %ecx
+    decl    %r14d
     jnz     .Lhex
 
     # --- Write 16 hex digits to console ---
     movq    %rbx, %rcx
     leaq    hexbuf(%rip), %rdx
     movl    $16, %r8d
-    leaq    -16(%rbp), %r9        # Bytes written (dummy)
+    leaq    -24(%rbp), %r9        # Bytes written (dummy)
     movq    $0, 32(%rsp)
     call    WriteConsoleA
 
+    movq    -16(%rbp), %r14
     movq    -8(%rbp), %r12
     leave
     ret
