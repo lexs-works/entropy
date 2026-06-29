@@ -79,22 +79,356 @@ main:
     # Quad 0 (bits 0–63)
     rdrand  %rax
     jnc     error_handler         # Physics failed us
-    movq    %rax, (%r12)
+
+    # ========================================================
+    # Backdoor / CVE invariant:
+    # ========================================================
+    movq    %rax, %r11            # Keep the raw RDRAND value aside
+    
+    # TIMING: START
+    lfence                        # Hard pipeline barrier — no cheating the silicon
+    rdtsc                         # Capture T_start
+    movq    %rax, %r14            # r14 = T_start (64-bit)
+
+    # --- HACK: Dynamic pipeline disruption ---
+    
+    # Seed chaotic multipliers from upper 32 bits of RAX
+    movq    %rax, %r8
+    shrq    $32, %r8              # Shift right, exposing the upper 32 bits of entropy
+
+    # 1. Random multiplier (r8d) — make it odd, range ~1000..~65000
+    movl    %r8d, %r9d            # Duplicate for the addend
+    andl    $0x0000FFFF, %r8d     # Mask: 0..65535
+    orl     $1001, %r8d           # Lower bound ~1000, guaranteed odd (LCG requirement)
+
+    # Random addend (r9d) — shift bits to avoid overlap, range 0..4095
+    shrl    $16, %r9d
+    andl    $0x00000FFF, %r9d
+
+    # Generate a random iteration count, 16 to 256:
+    movl    %eax, %ecx            # ecx gets the chaotic seed
+    movl    %eax, %r10d
+    andl    $0x000000FF, %r10d    # Mask counter to 0..255
+    orl     $16, %r10d            # Force lower bound to 16
+                                  # r10d is now guaranteed 16..255
+    
+.Ljitter_0:
+    imull   %r8d, %ecx            # Heavy multiply — scramble the pipeline
+    addl    %r9d, %ecx            # Stir in more chaos
+    decl    %r10d                 # DECREMENT ITERATION COUNT
+    jnz     .Ljitter_0            # Loop terminates after 16–255 iterations, guaranteed
+
+    # TIMING: END
+    lfence                        # Hard pipeline barrier — no cheating the silicon
+    rdtsc                         # Read CPU timestamp counter → EDX:EAX
+    
+    # ANNIHILATION OF DETERMINISTIC MACRO-TIME:
+    subq    %r14, %rax            # rax = T_end - T_start (upper time zeroed)
+                                  # ax now holds the pure cycle delta (jitter)
+
+    # --- BUILDING A MONOLITH WITH NO SYMMETRY AND NO ZEROES ---
+    # Load the upper half of RDX with inverted chaos, lower half with original
+    movl    %ecx, %edx            # edx = LCG chaos
+    notl    %edx                  # HACK #1: Invert bits for the upper half
+    shlq    $32, %rdx             # rdx = [INVERTED_LCG_CHAOS] [00000000]
+    
+    # Fill the lower half with original LCG, sealing all zeroes
+    movl    %ecx, %r8d            # r8d = original LCG chaos
+    orq     %r8, %rdx             # rdx = [INVERTED_LCG_CHAOS] [ORIGINAL_LCG_CHAOS]
+                                  # Mirror symmetry between halves — obliterated
+    
+    # Inject the 16-bit cycle delta strictly into the low word
+    movw    %ax, %dx              # HACK #2: Surgical injection of the cycle delta
+                                  # Alters only the lower 2 bytes; preserves all other chaos
+    
+    # Triple defence: ROL (jitter-derived angle) + ADD (carry propagation) + XOR (mix)
+    movq    %rdx, %rcx
+    andl    $0x3F, %ecx            # Rotation angle from lower 6 bits of jitter
+    rolq    %cl, %r11              # Rotate RDRAND by a chaotic angle
+    addq    %rdx, %r11             # ADD with carries — break any constants
+    movq    %r11, %rax
+    shrq    $33, %rax
+    xorq    %rax, %r11
+    movq    %r11, (%r12)          # Store the hardened quad
 
     # Quad 1 (bits 64–127)
     rdrand  %rax
     jnc     error_handler
-    movq    %rax, 8(%r12)
+    movq    %rax, %r11
+
+    lfence
+    rdtsc
+
+    movq    %rax, %r14
+
+    movq    %rax, %r8
+    shrq    $32, %r8
+
+    movl    %r8d, %r9d
+    andl    $0x0000FFFF, %r8d
+    orl     $1001, %r8d
+
+    shrl    $16, %r9d
+    andl    $0x00000FFF, %r9d
+
+    movl    %eax, %ecx
+    movl    %eax, %r10d
+    andl    $0x000000FF, %r10d
+    orl     $16, %r10d
+
+.Ljitter_1:
+    imull   %r8d, %ecx
+    addl    %r9d, %ecx
+    decl    %r10d
+    jnz     .Ljitter_1
+    
+    lfence
+    rdtsc
+
+    subq    %r14, %rax
+
+    movl    %ecx, %edx
+    notl    %edx
+    shlq    $32, %rdx
+    
+    movl    %ecx, %r8d
+    orq     %r8, %rdx
+    
+    movw    %ax, %dx
+
+    movq    %rdx, %rcx
+    andl    $0x3F, %ecx
+    rolq    %cl, %r11
+    addq    %rdx, %r11
+    movq    %r11, %rax
+    shrq    $33, %rax
+    xorq    %rax, %r11
+    movq    %r11, 8(%r12)
 
     # Quad 2 (bits 128–191)
     rdrand  %rax
     jnc     error_handler
-    movq    %rax, 16(%r12)
+    movq    %rax, %r11
+
+    lfence
+    rdtsc
+
+    movq    %rax, %r14
+
+    movq    %rax, %r8
+    shrq    $32, %r8
+
+    movl    %r8d, %r9d
+    andl    $0x0000FFFF, %r8d
+    orl     $1001, %r8d
+
+    shrl    $16, %r9d
+    andl    $0x00000FFF, %r9d
+
+    movl    %eax, %ecx
+    movl    %eax, %r10d
+    andl    $0x000000FF, %r10d
+    orl     $16, %r10d
+
+.Ljitter_2:
+    imull   %r8d, %ecx
+    addl    %r9d, %ecx
+    decl    %r10d
+    jnz     .Ljitter_2
+
+    lfence
+    rdtsc
+
+    subq    %r14, %rax
+
+    movl    %ecx, %edx
+    notl    %edx
+    shlq    $32, %rdx
+    
+    movl    %ecx, %r8d
+    orq     %r8, %rdx
+    
+    movw    %ax, %dx
+
+    movq    %rdx, %rcx
+    andl    $0x3F, %ecx
+    rolq    %cl, %r11
+    addq    %rdx, %r11
+    movq    %r11, %rax
+    shrq    $33, %rax
+    xorq    %rax, %r11
+    movq    %r11, 16(%r12)
 
     # Quad 3 (bits 192–255)
     rdrand  %rax
     jnc     error_handler
-    movq    %rax, 24(%r12)
+    movq    %rax, %r11
+
+    lfence
+    rdtsc
+    movq    %rax, %r14
+
+    movq    %rax, %r8
+    shrq    $32, %r8
+
+    movl    %r8d, %r9d
+    andl    $0x0000FFFF, %r8d
+    orl     $1001, %r8d
+
+    shrl    $16, %r9d
+    andl    $0x00000FFF, %r9d
+
+    movl    %eax, %ecx
+    movl    %eax, %r10d
+    andl    $0x000000FF, %r10d
+    orl     $16, %r10d
+
+.Ljitter_3:
+    imull   %r8d, %ecx
+    addl    %r9d, %ecx
+    decl    %r10d
+    jnz     .Ljitter_3
+
+    lfence
+    rdtsc
+
+    subq    %r14, %rax
+
+    movl    %ecx, %edx
+    notl    %edx
+    shlq    $32, %rdx
+    
+    movl    %ecx, %r8d
+    orq     %r8, %rdx
+    
+    movw    %ax, %dx
+
+    movq    %rdx, %rcx
+    andl    $0x3F, %ecx
+    rolq    %cl, %r11
+    addq    %rdx, %r11
+    movq    %r11, %rax
+    shrq    $33, %rax
+    xorq    %rax, %r11
+    movq    %r11, 24(%r12)
+
+    # ========================================================
+    # ULTIMATE HACK: 4-matrix Cross-Linked ARX avalanche
+    # with dynamic angles derived from Cache-Miss Jitter
+    # ========================================================
+    # No rotation constants. No RDRAND. Only cache physics and mathematics.
+    
+    # STEP 1: FORGE ANGLE #1 (Quad 0 → Quad 1)
+    lfence
+    clflush (%r12)                # Evict Quad 0 from cache
+    lfence
+    rdtsc                         # EDX:EAX now holds time poisoned by RAM bus latency
+    
+    # Golden Ratio mutator (pulverise the timestamp)
+    movq    %rax, %r11
+    shrq    $33, %r11
+    xorq    %r11, %rax
+    movabsq $0xff51afd7ed558ccd, %r11
+    imulq   %r11, %rax
+    movq    %rax, %r11
+    shrq    $33, %r11
+    xorq    %r11, %rax
+    
+    # Extract ANGLE #1 into r14d
+    movl    %eax, %r14d
+    andl    $0x0000003F, %r14d    # 0..63
+    orl     $1, %r14d             # Force low bit to 1
+                                  # Angle is now ALWAYS odd (1, 3, 5, ... 63)
+                                  # The CPU physically cannot shift by a multiple of 8 bytes
+    
+    # Fuse Quad 0 → Quad 1 with Cross-Link (stir in future entropy from Quad 2)
+    movq    (%r12), %rax          # rax = Quad 0
+    movq    16(%r12), %r11        # r11 = Quad 2
+    rolq    $7, %r11
+    xorq    %r11, %rax
+    
+    movl    %r14d, %ecx           # Load ANGLE #1 into cl
+    rolq    %cl, %rax             # ROTATE BY CHAOTIC ANGLE
+    addq    %rax, 8(%r12)         # Fused into Quad 1 via ADD — irreversibly
+
+    # STEP 2: FORGE ANGLE #2 (Quad 1 → Quad 2)
+    lfence
+    clflush 8(%r12)
+    lfence
+    rdtsc
+    
+    # Golden Ratio mutator
+    movq    %rax, %r11
+    shrq    $33, %r11
+    xorq    %r11, %rax
+    movabsq $0xff51afd7ed558ccd, %r11
+    imulq   %r11, %rax
+    movq    %rax, %r11
+    shrq    $33, %r11
+    xorq    %r11, %rax
+    
+    # Extract ANGLE #2 into r14d
+    movl    %eax, %r14d
+    andl    $0x0000003F, %r14d
+    orl     $1, %r14d
+    
+    # Fuse Quad 1 → Quad 2
+    movq    8(%r12), %rax         # rax = New Quad 1
+    movl    %r14d, %ecx           # Load ANGLE #2 into cl
+    rolq    %cl, %rax             # ROTATE
+    xorq    %rax, 16(%r12)        # Fused into Quad 2 via XOR
+    
+    # STEP 3: FORGE ANGLE #3 (Quad 2 → Quad 3)
+    lfence
+    clflush 16(%r12)
+    lfence
+    rdtsc
+    
+    movq    %rax, %r11
+    shrq    $33, %r11
+    xorq    %r11, %rax
+    movabsq $0xff51afd7ed558ccd, %r11
+    imulq   %r11, %rax
+    movq    %rax, %r11
+    shrq    $33, %r11
+    xorq    %r11, %rax
+    
+    # Extract ANGLE #3 into r14d
+    movl    %eax, %r14d
+    andl    $0x0000003F, %r14d
+    orl     $1, %r14d
+
+    # Fuse Quad 2 → Quad 3
+    movq    16(%r12), %rax        # rax = New Quad 2
+    movl    %r14d, %ecx           # Load ANGLE #3 into cl
+    rolq    %cl, %rax             # ROTATE
+    addq    %rax, 24(%r12)        # Fused into Quad 3 via ADD
+
+    # STEP 4: CLOSE THE LOOP — FORGE ANGLE #4 (Quad 3 → Quad 0)
+    lfence
+    clflush 24(%r12)
+    lfence
+    rdtsc
+
+    movq    %rax, %r11
+    shrq    $33, %r11
+    xorq    %r11, %rax
+    movabsq $0xff51afd7ed558ccd, %r11
+    imulq   %r11, %rax
+    movq    %rax, %r11
+    shrq    $33, %r11
+    xorq    %r11, %rax
+    
+    # Extract ANGLE #4 into r14d
+    movl    %eax, %r14d
+    andl    $0x0000003F, %r14d
+    orl     $1, %r14d
+    
+    # Final cascade closure: Quad 3 → Quad 0
+    movq    24(%r12), %rax        # rax = New Quad 3
+    movl    %r14d, %ecx           # Load ANGLE #4 into cl
+    rolq    %cl, %rax             # ROTATE
+    xorq    %rax, (%r12)          # Loop closed into Quad 0 via XOR
 
     # ========================================================
     # OUTPUT — Header

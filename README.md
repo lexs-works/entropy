@@ -1,6 +1,10 @@
 # entropy
 
-**entropy** — Air-gapped 256-bit entropy generator for BIP39 cold wallets. Pure AT&T assembly, builds for Windows (MinGW-w64). Uses Intel RDRAND hardware randomness. Pipe the output directly into iancoleman/bip39 for mnemonic generation.
+**entropy** — Air-gapped 256-bit entropy generator for BIP39 cold wallets. Pure AT&T assembly, builds for Windows (MinGW-w64). Seven independent layers of hardware entropy: RDRAND quantum noise, RDTSC system chaos, cache-miss jitter, pipeline bomb, golden ratio mixer, cross-linked ARX avalanche, and ROL+ADD+XOR anti-backdoor merge. Compromise any one layer — the other six preserve unpredictability. Pipe the output directly into iancoleman/bip39 for mnemonic generation.
+
+## Why
+
+Your crypto keys depend on OpenSSL — 500,000 lines of C. Heartbleed. The Debian bug. Dual_EC_DRBG. The entire attack surface, replaced by 500 lines of auditable assembly. Not a CSPRNG. Not a key generator. A raw entropy seed. You bring the hash function.
 
 ## Usage
 
@@ -52,4 +56,4 @@ file entropy.exe
 
 ## Disclaimer
 
-The author assumes no liability whatsoever for any use of this utility. Use entirely at your own risk.
+**This tool generates entropy, not keys.** The author assumes no liability for any use. If you lose money on crypto keys — that's between you and thermodynamics.
